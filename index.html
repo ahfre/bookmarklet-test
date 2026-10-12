@@ -1,0 +1,98 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bookmarklet Test Page</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-zinc-900 text-zinc-100 p-4">
+<div class="max-w-xl mx-auto space-y-4">
+  <h1 class="text-xl font-bold text-sky-400">Bookmarklet test page</h1>
+  <p class="text-sm text-zinc-400">Tap the buttons in order, then run your bookmarklet.</p>
+
+  <button id="seed" class="w-full bg-sky-700 rounded-lg p-3 font-semibold">1. Seed test data</button>
+  <button id="url" class="w-full bg-sky-700 rounded-lg p-3 font-semibold">2. Add test URL and hash parameters</button>
+  <button id="lock" class="w-full bg-amber-700 rounded-lg p-3 font-semibold">3. (Optional) Hold an IndexedDB connection open to force a failure</button>
+  <button id="state" class="w-full bg-zinc-700 rounded-lg p-3 font-semibold">Show what is currently stored</button>
+
+  <pre id="log" class="bg-black/50 rounded-lg p-3 text-xs whitespace-pre-wrap break-all"></pre>
+
+  <div class="text-sm bg-zinc-800 rounded-lg p-3 space-y-2">
+    <p class="font-bold text-sky-400">What you should see in the bookmarklet</p>
+    <p><b>Pre-checked (recommended for deletion):</b> cookies <code>_ga</code>, <code>_gid</code>, <code>_fbp</code>, <code>cart_count</code>; localStorage <code>aws-solution/clickstream-web/deviceIdKey</code>, <code>sentry_replay</code>, <code>mixpanel_x</code>; sessionStorage <code>_cfPre_tabId</code>, <code>sentryReplaySession</code>; URL <code>utm_source</code>, <code>fbclid</code>, <code>gad_source</code>, <code>(hash) gclid</code>; <code>window.name</code>.</p>
+    <p><b>Greyed (kept):</b> cookies <code>session_id</code>, <code>theme</code>, <code>lang</code>, <code>token</code>, <code>NEXT_LOCALE</code>; localStorage <code>authToken</code>, <code>my_notes</code>; URL <code>page</code>, <code>(hash) tab</code>; the IndexedDB database and the Cache API entry.</p>
+    <p><b>Tests to run:</b></p>
+    <ol class="list-decimal ml-5 space-y-1">
+      <li>Tap <b>Delete SELECTION</b>. You should get the 3-second "Successfully deleted the SELECTED rows" message. Then use "Show what is currently stored" to confirm that only the greyed items remain.</li>
+      <li>Re-seed, tick one greyed row, and delete the selection. Confirm that it goes too.</li>
+      <li>Re-seed and tap <b>Delete ALL</b>. Everything should go, including the IndexedDB database and the cache.</li>
+      <li>Run step 3 above, then <b>Delete ALL</b>. The IndexedDB row should appear under "COULD NOT DELETE:" with a Close button, and the panel should close itself after 5 seconds.</li>
+      <li>Tap <b>Cancel</b>. Nothing should change.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+var log = document.getElementById('log');
+function say(t){ log.textContent += t + "\n"; }
+var held = null;
+
+document.getElementById('seed').onclick = async function(){
+  log.textContent = '';
+  var c = {_ga:'GA1.2.123456789.1700000000', _gid:'GA1.2.987654321.1700000000', _fbp:'fb.1.1700000000.123456',
+           cart_count:'3', session_id:'abc123secret', theme:'dark', lang:'en', token:'tok_abcdef', NEXT_LOCALE:'en'};
+  for (var k in c) document.cookie = k + '=' + c[k] + ';path=/;max-age=86400';
+  try {
+    localStorage.setItem('aws-solution/clickstream-web/deviceIdKey','dev-123');
+    localStorage.setItem('sentry_replay','{"x":1}');
+    localStorage.setItem('mixpanel_x','{"id":"u1"}');
+    localStorage.setItem('authToken','keepme');
+    localStorage.setItem('my_notes','hello world');
+    sessionStorage.setItem('_cfPre_tabId','tab-1');
+    sessionStorage.setItem('sentryReplaySession','sess-1');
+    sessionStorage.setItem('draft','some draft');
+  } catch(e){ say('Storage blocked: ' + e.message); }
+  window.name = 'leftover window name data';
+  try {
+    await new Promise(function(res, rej){
+      var r = indexedDB.open('test-db', 1);
+      r.onupgradeneeded = function(){ r.result.createObjectStore('s'); };
+      r.onsuccess = function(){ r.result.close(); res(); };
+      r.onerror = function(){ rej(r.error); };
+    });
+    say('IndexedDB: test-db created');
+  } catch(e){ say('IndexedDB unavailable: ' + e); }
+  try { var ch = await caches.open('test-cache-v1'); await ch.put('/x', new Response('hi')); say('Cache API: test-cache-v1 created'); }
+  catch(e){ say('Cache API unavailable: ' + e); }
+  say('Seeded cookies, localStorage, sessionStorage, window.name.');
+};
+
+document.getElementById('url').onclick = function(){
+  try {
+    history.replaceState(null, '', location.pathname + '?utm_source=newsletter&fbclid=IwAR0abcdefghijklmnop&gad_source=1&page=2#/route?gclid=xyz123&tab=info');
+    say('URL is now: ' + location.href);
+  } catch(e){ say('Could not change URL: ' + e.message); }
+};
+
+document.getElementById('lock').onclick = function(){
+  var r = indexedDB.open('test-db', 1);
+  r.onupgradeneeded = function(){ r.result.createObjectStore('s'); };
+  r.onsuccess = function(){ held = r.result; say('Holding test-db open. Deleting it should now be blocked, so it should be reported as failed.'); };
+  r.onerror = function(){ say('Could not open test-db: ' + r.error); };
+};
+
+document.getElementById('state').onclick = async function(){
+  log.textContent = '';
+  say('URL: ' + location.href);
+  say('Cookies: ' + (document.cookie || '(none)'));
+  try { say('localStorage keys: ' + (Object.keys(localStorage).join(', ') || '(none)')); } catch(e){}
+  try { say('sessionStorage keys: ' + (Object.keys(sessionStorage).join(', ') || '(none)')); } catch(e){}
+  say('window.name: ' + (window.name || '(empty)'));
+  try { var d = await indexedDB.databases(); say('IndexedDB: ' + (d.map(function(x){return x.name}).join(', ') || '(none)')); } catch(e){ say('IndexedDB: unavailable'); }
+  try { say('Cache API: ' + ((await caches.keys()).join(', ') || '(none)')); } catch(e){ say('Cache API: unavailable'); }
+};
+</script>
+</body>
+</html>
